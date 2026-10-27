@@ -1,0 +1,76 @@
+import network
+import time
+from machine import Pin
+import BlynkLib
+
+# --- ข้อมูล Blynk และ WiFi ---
+BLYNK_AUTH_TOKEN = "ใส่_AUTH_TOKEN_ของคุณที่นี่"
+WIFI_SSID = "Wokwi-GUEST"
+WIFI_PASS = ""
+
+# --- กำหนดขา GPIO ของ LED ---
+RED_LED_PIN = 25
+GREEN_LED_PIN = 26
+YELLOW_LED_PIN = 27
+
+# ตั้งค่าโหมด OUTPUT
+red_led = Pin(RED_LED_PIN, Pin.OUT)
+green_led = Pin(GREEN_LED_PIN, Pin.OUT)
+yellow_led = Pin(YELLOW_LED_PIN, Pin.OUT)
+
+# เริ่มต้นด้วยการปิดไฟทั้งหมด (LOW = 0)
+red_led.value(0)
+green_led.value(0)
+yellow_led.value(0)
+
+# --- ฟังก์ชันเชื่อมต่อ WiFi ---
+def connect_wifi():
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(True)
+    if not wlan.isconnected():
+        print("Connecting to WiFi...", end="")
+        wlan.connect(WIFI_SSID, WIFI_PASS)
+        while not wlan.isconnected():
+            time.sleep(0.5)
+            print(".", end="")
+    print("\nWiFi Connected! IP:", wlan.ifconfig()[0])
+
+connect_wifi()
+
+# --- เริ่มต้นใช้งาน Blynk ---
+# สำหรับ Blynk IoT เวอร์ชันใหม่ (New Blynk) ใช้ server="blynk.cloud"
+blynk = BlynkLib.Blynk(BLYNK_AUTH_TOKEN, server="blynk.cloud", port=80)
+
+# --- Blynk Virtual Pin Handlers ---
+@blynk.on("V0")
+def v0_write_handler(value):
+    val = int(value[0])  # 0 = OFF, 1 = ON
+    red_led.value(val)
+    if val == 1:
+        print("Red LED: ON")
+    else:
+        print("Red LED: OFF")
+
+@blynk.on("V1")
+def v1_write_handler(value):
+    val = int(value[0])  # 0 = OFF, 1 = ON
+    green_led.value(val)
+    if val == 1:
+        print("Green LED: ON")
+    else:
+        print("Green LED: OFF")
+
+@blynk.on("V2")
+def v2_write_handler(value):
+    val = int(value[0])  # 0 = OFF, 1 = ON
+    yellow_led.value(val)
+    if val == 1:
+        print("Yellow LED: ON")
+    else:
+        print("Yellow LED: OFF")
+
+print("ESP32 is ready. Waiting for Blynk commands...")
+
+# --- Main Loop ---
+while True:
+    blynk.run()
