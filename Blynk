@@ -1,0 +1,68 @@
+#define BLYNK_TEMPLATE_ID ""
+#define BLYNK_TEMPLATE_NAME ""
+#define BLYNK_AUTH_TOKEN ""
+
+#include <WiFi.h>
+#include <BlynkSimpleEsp32.h>
+
+char auth[] = BLYNK_AUTH_TOKEN;
+char ssid[] = "Wokwi-GUEST";
+char pass[] = "";
+
+#define RED_LED    25
+#define GREEN_LED  26
+#define YELLOW_LED 27
+
+// --- Blynk Switch Handlers ---
+BLYNK_WRITE(V0) {
+    int value = param.asInt(); // 0 = OFF,1 = ON
+  digitalWrite(RED_LED,value);
+
+  if (value == 1) {
+    Serial.println("Red LED: ON");
+  } else {
+    Serial.println("Red LED: OFF");
+  }
+}
+
+BLYNK_WRITE(V1) {
+    int value = param.asInt(); // 0 = OFF,1 = ON
+  digitalWrite(GREEN_LED,value);
+
+  if (value == 1) {
+    Serial.println("Green LED: ON");
+  } else {
+    Serial.println("Green LED: OFF");
+  }
+}
+
+BLYNK_WRITE(V2) {
+    int value = param.asInt(); // 0 = OFF,1 = ON
+  digitalWrite(YELLOW_LED,value);
+
+  if (value == 1) {
+    Serial.println("Yellow LED: ON");
+  } else {
+    Serial.println("Yellow LED: OFF");
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  Blynk.begin(auth, ssid, pass);
+
+  pinMode(RED_LED, OUTPUT);
+  pinMode(GREEN_LED, OUTPUT);
+  pinMode(YELLOW_LED, OUTPUT);
+
+// Start with all OFF
+digitalWrite(RED_LED, LOW);
+digitalWrite(GREEN_LED, LOW);
+digitalWrite(YELLOW_LED, LOW);
+
+Serial.println("ESP32 is ready. Waiting for Blynk commands...");
+}
+
+void loop() {
+  Blynk.run();
+}
