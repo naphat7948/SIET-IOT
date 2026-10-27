@@ -1,0 +1,63 @@
+"""ESP32: three physical LEDs controlled by Blynk V0/V1/V2."""
+import network
+import time
+from machine import Pin
+from blynk import Blynk
+
+# Fill in your own Wi-Fi and a NEW Blynk device token.
+BLYNK_TEMPLATE_ID = 'TMPL6ww9-MqbW'
+BLYNK_TEMPLATE_NAME = 'SIET IOT'
+BLYNK_AUTH_TOKEN = 'chSb0IEjD8Vi8uZ0wSP_kH9AMphx6jKX'
+WIFI_SSID = 'Wokwi-GUEST'
+WIFI_PASSWORD = ''
+
+RED_LED = Pin(25, Pin.OUT, value=0)
+GREEN_LED = Pin(26, Pin.OUT, value=0)
+YELLOW_LED = Pin(27, Pin.OUT, value=0)
+
+wifi = network.WLAN(network.STA_IF)
+wifi.active(True)
+
+# Port 80 for simulator compatibility; plaintext. See README for TLS notes.
+blynk = Blynk(BLYNK_AUTH_TOKEN, server='blynk.cloud', port=80)
+
+@blynk.on('V0')
+def red_switch(values):
+    value = 1 if int(values[0]) else 0
+    RED_LED.value(value)
+    print('Red LED:', 'ON' if value else 'OFF')
+
+@blynk.on('V1')
+def green_switch(values):
+    value = 1 if int(values[0]) else 0
+    GREEN_LED.value(value)
+    print('Green LED:', 'ON' if value else 'OFF')
+
+@blynk.on('V2')
+def yellow_switch(values):
+    value = 1 if int(values[0]) else 0
+    YELLOW_LED.value(value)
+    print('Yellow LED:', 'ON' if value else 'OFF')
+
+@blynk.on_connected
+def sync_buttons():
+    print('Blynk: retrieving V0/V1/V2 latest states')
+    blynk.sync_virtual(0, 1, 2)
+
+last_wifi_attempt = time.ticks_add(time.ticks_ms(), -10000)
+print('ESP32 ready. Waiting for Blynk commands...')
+while True:
+    now = time.ticks_ms()
+    if not wifi.isconnected():
+        if blynk.conn is not None:
+            blynk.disconnect()
+        if time.ticks_diff(now, last_wifi_attempt) >= 10000:
+            last_wifi_attempt = now
+            print('Connecting to Wi-Fi...')
+            try:
+                wifi.connect(WIFI_SSID, WIFI_PASSWORD)
+            except OSError as err:
+                print('Wi-Fi error:', err)
+    else:
+        blynk.run()
+    time.sleep_ms(20)
