@@ -1,0 +1,31 @@
+from machine import Pin
+import time
+
+# กำหนดขาที่จะส่งสัญญาณไปที่หลอด
+led_red = Pin(21, Pin.OUT)
+led_green = Pin(2, Pin.OUT)
+led_yellow = Pin(15, Pin.OUT)
+
+# ฟังก์ชั่นในการเปิดไฟทั้ง 3 ดวงพร้อมกัน
+def main():
+    # เปิดค้างไว้
+    while True:
+        # เปิดไฟ
+        led_red.value(1)
+        time.sleep(1)
+        led_green.value(1)
+        time.sleep(1)
+        led_yellow.value(1)
+        time.sleep(1) #หน่วงเวลา 1 วินาที
+
+        # ปิดไฟ
+        led_red.value(0)
+        time.sleep(1)
+        led_green.value(0)
+        time.sleep(1)
+        led_yellow.value(0)
+        time.sleep(1) #หน่วงเวลา 1 วินาที
+
+
+# เรียกใช้ฟังก์ชั่น main
+main()
