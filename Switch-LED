@@ -1,0 +1,12 @@
+from machine import Pin
+import time
+
+# กำหนด GPIO 4 เป็นขาจ่าย Output
+led = Pin(4, Pin.OUT)
+
+# วนลูปให้ไฟติดดับสลับกัน
+while True:
+    led.value(1) # เปิดไฟ
+    time.sleep(1) # รอ 1 วินาที
+    led.value(0) # ปิดไฟ
+    time.sleep(1) # รอ 1 วินาที
