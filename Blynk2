@@ -1,0 +1,249 @@
+"""Small Blynk IoT binary TCP client for MicroPython ESP32.
+No external Blynk library required. Call run() often.
+"""
+import socket
+import struct
+import time
+
+try:
+    import ssl
+except ImportError:
+    ssl = None
+
+MSG_RSP = 0
+MSG_PING = 6
+MSG_HW = 20
+MSG_HW_LOGIN = 29
+MSG_REDIRECT = 41
+STATUS_OK = 200
+
+class Blynk:
+    def __init__(self, token, server='blynk.cloud', port=80, use_tls=False):
+        self.token = token
+        self.server = server
+        self.port = port
+        self.use_tls = use_tls
+        self.handlers = {}
+        self.conn = None
+        self.rx = bytearray()
+        self.msg_id = 0
+        self.login_id = None
+        self.ping_id = None
+        self.is_authenticated = False
+        self.redirect_count = 0
+        self.last_rx = time.ticks_ms()
+        self.last_tx = self.last_rx
+        self.last_attempt = time.ticks_add(self.last_rx, -5000)
+        self.connected_callback = None
+
+    def on(self, event):
+        def decorator(callback):
+            self.handlers[str(event).upper()] = callback
+            return callback
+        return decorator
+
+    def on_connected(self, callback):
+        self.connected_callback = callback
+        return callback
+
+    def _next_id(self):
+        self.msg_id = self.msg_id % 65535 + 1
+        return self.msg_id
+
+    def disconnect(self):
+        if self.conn is not None:
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+        self.conn = None
+        self.rx = bytearray()
+        self.login_id = None
+        self.ping_id = None
+        self.is_authenticated = False
+
+    def connect(self):
+        self.disconnect()
+        self.last_attempt = time.ticks_ms()
+        try:
+            addr = socket.getaddrinfo(self.server, self.port)[0][-1]
+            s = socket.socket()
+            s.settimeout(5)
+            try:
+                s.connect(addr)
+                if self.use_tls:
+                    if ssl is None:
+                        raise RuntimeError('TLS module unavailable')
+                    s = ssl.wrap_socket(s, server_hostname=self.server)
+                s.settimeout(2)  # allow full authentication packet to be sent
+                self.conn = s
+            except Exception:
+                s.close()
+                raise
+            self.last_rx = time.ticks_ms()
+            self.last_tx = self.last_rx
+            self.login_id = self.send(MSG_HW_LOGIN, self.token, allow_before_login=True)
+            if self.login_id is None:
+                raise OSError('Unable to send login')
+            self.conn.settimeout(0.05)
+            print('Blynk: connected, authenticating... login message ID:', self.login_id)
+        except Exception as err:
+            print('Blynk connect error:', err)
+            self.disconnect()
+
+    def _write_all(self, packet):
+        # Socket.write() may write only part of the bytes on some MicroPython ports.
+        sent = 0
+        total = len(packet)
+        while sent < total:
+            n = self.conn.send(packet[sent:])
+            if n is None or n <= 0:
+                raise OSError('Incomplete TCP send')
+            sent += n
+
+    def send(self, command, *fields, allow_before_login=False):
+        if self.conn is None or (not self.is_authenticated and not allow_before_login):
+            return None
+        try:
+            payload = b'\0'.join(str(f).encode('utf-8') for f in fields)
+            mid = self._next_id()
+            packet = struct.pack('!BHH', command, mid, len(payload)) + payload
+            self._write_all(packet)
+            self.last_tx = time.ticks_ms()
+            return mid
+        except Exception as err:
+            print('Blynk send error:', err)
+            self.disconnect()
+            return None
+
+    def _response(self, mid, status=STATUS_OK):
+        if self.conn is None:
+            return
+        try:
+            packet = struct.pack('!BHH', MSG_RSP, mid, status)
+            self._write_all(packet)
+            self.last_tx = time.ticks_ms()
+        except Exception:
+            self.disconnect()
+
+    def virtual_write(self, pin, *values):
+        if not values:
+            return None
+        return self.send(MSG_HW, 'vw', str(pin).upper().lstrip('V'), *values)
+
+    def sync_virtual(self, *pins):
+        return self.send(MSG_HW, 'vr', *(str(p).upper().lstrip('V') for p in pins))
+
+    def _dispatch(self, data):
+        try:
+            parts = data.decode('utf-8').split('\0')
+            if len(parts) >= 3 and parts[0] == 'vw':
+                key = 'V' + parts[1]
+                callback = self.handlers.get(key.upper())
+                if callback:
+                    callback(parts[2:])
+        except Exception as err:
+            print('Blynk handler error:', err)
+
+    def _process(self):
+        while len(self.rx) >= 5:
+            command, mid, size = struct.unpack('!BHH', self.rx[:5])
+            if command == MSG_RSP:
+                self.rx = self.rx[5:]
+                if mid == self.login_id:
+                    print('Blynk: login response status:', size)
+                    if size == STATUS_OK:
+                        self.is_authenticated = True
+                        self.ping_id = None
+                        print('Blynk: authenticated')
+                        if self.connected_callback:
+                            try:
+                                self.connected_callback()
+                            except Exception as err:
+                                print('Blynk connected callback error:', err)
+                    else:
+                        print('Blynk: authentication rejected, status', size)
+                        self.disconnect()
+                        return
+                elif mid == self.ping_id:
+                    if size != STATUS_OK:
+                        self.disconnect()
+                        return
+                    self.ping_id = None
+                continue
+            if size > 4096:
+                print('Blynk: invalid packet size')
+                self.disconnect()
+                return
+            if len(self.rx) < 5 + size:
+                return
+            body = bytes(self.rx[5:5 + size])
+            self.rx = self.rx[5 + size:]
+            if command == MSG_PING:
+                self._response(mid)
+            elif command == MSG_REDIRECT:
+                try:
+                    parts = body.decode('utf-8').split('\0')
+                    host = parts[0].strip()
+                    port = int(parts[1]) if len(parts) > 1 and parts[1] else self.port
+                    if not host or port < 1 or port > 65535:
+                        raise ValueError('Invalid redirect destination')
+                    print('Blynk: server redirect to', host, port)
+                    if self.redirect_count >= 5:
+                        print('Blynk: too many redirects')
+                        self.disconnect()
+                        return
+                    self.redirect_count += 1
+                    self.server = host
+                    self.port = port
+                    self.disconnect()
+                    self.last_attempt = time.ticks_add(time.ticks_ms(), -5000)
+                    return
+                except Exception as err:
+                    print('Blynk: malformed redirect:', err)
+                    self.disconnect()
+                    return
+            elif command == MSG_HW:
+                self._dispatch(body)
+            else:
+                print('Blynk: received packet type', command, 'id', mid, 'size', size)
+            # Do not send generic response for HW: matches standard Blynk hardware handling.
+
+    def run(self):
+        now = time.ticks_ms()
+        if self.conn is None:
+            if time.ticks_diff(now, self.last_attempt) >= 5000:
+                self.connect()
+            return
+        try:
+            try:
+                chunk = self.conn.recv(1024)
+                if not chunk:
+                    print('Blynk: server closed TCP connection')
+                    self.disconnect()
+                    return
+                print('Blynk: received', len(chunk), 'bytes') if not self.is_authenticated else None
+                self.rx.extend(chunk)
+                self.last_rx = time.ticks_ms()
+                self._process()
+            except OSError as err:
+                # EAGAIN / ETIMEDOUT are expected with short socket timeout.
+                if err.args and err.args[0] not in (11, 110, 115, 116, 119, 'timed out'):
+                    raise
+            if self.conn is None:
+                return
+            now = time.ticks_ms()
+            if not self.is_authenticated:
+                if time.ticks_diff(now, self.last_tx) > 10000:
+                    print('Blynk: login timeout (no valid response within 10 s)')
+                    self.disconnect()
+                return
+            if time.ticks_diff(now, self.last_rx) > 45000:
+                print('Blynk: heartbeat timeout')
+                self.disconnect()
+                return
+            if self.ping_id is None and time.ticks_diff(now, self.last_tx) >= 10000:
+                self.ping_id = self.send(MSG_PING)
+        except Exception as err:
+            print('Blynk network error:', err)
+            self.disconnect()
